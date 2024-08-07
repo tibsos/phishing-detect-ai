@@ -6,36 +6,46 @@ from sklearn.model_selection import train_test_split
 import mailbox
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
+import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 
 # Load emails from both phishing and legitimate email mbox files
 def load_emails(phishing_file_path, legitimate_file_path):
-    print("Loading phishing emails...")
+    print("Загрузка фишинговых писем...")
     phishing_mbox = mailbox.mbox(phishing_file_path)
     phishing_emails = []
     for message in phishing_mbox:
         if message.is_multipart():
             for part in message.walk():
                 if part.get_content_type() == "text/plain":
-                    phishing_emails.append(part.get_payload(decode=True).decode())
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        phishing_emails.append(payload.decode(errors='ignore'))
         else:
-            phishing_emails.append(message.get_payload(decode=True).decode())
+            payload = message.get_payload(decode=True)
+            if payload:
+                phishing_emails.append(payload.decode(errors='ignore'))
 
-    print("Loading legitimate emails...")
+    print("Загрузка легитимных писем...")
     legitimate_mbox = mailbox.mbox(legitimate_file_path)
     legitimate_emails = []
     for message in legitimate_mbox:
         if message.is_multipart():
             for part in message.walk():
                 if part.get_content_type() == "text/plain":
-                    legitimate_emails.append(part.get_payload(decode=True).decode())
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        legitimate_emails.append(payload.decode(errors='ignore'))
         else:
-            legitimate_emails.append(message.get_payload(decode=True).decode())
+            payload = message.get_payload(decode=True)
+            if payload:
+                legitimate_emails.append(payload.decode(errors='ignore'))
 
     return phishing_emails, legitimate_emails
 
 # Preprocess the emails
 def preprocess_emails(emails):
-    print("Preprocessing emails...")
+    print("Предобработка писем...")
     cleaned_emails = []
     for email in emails:
         email = re.sub(r'\W', ' ', email)  # Remove special characters
@@ -44,7 +54,7 @@ def preprocess_emails(emails):
     return cleaned_emails
 
 # Load and preprocess the emails
-print("Loading and preprocessing emails...")
+print("Загрузка и предобработка писем...")
 phishing_emails, legitimate_emails = load_emails('emails-phishing.mbox', 'emails-normal.mbox')
 emails = phishing_emails + legitimate_emails
 cleaned_emails = preprocess_emails(emails)
@@ -53,11 +63,11 @@ cleaned_emails = preprocess_emails(emails)
 labels = np.array([1] * len(phishing_emails) + [0] * len(legitimate_emails))
 
 # Split the dataset into training and testing sets
-print("Splitting the dataset into training and testing sets...")
+print("Разделение данных на тренировочные и тестовые...")
 X_train, X_test, y_train, y_test = train_test_split(cleaned_emails, labels, test_size=0.2, random_state=42)
 
 # Tokenization and padding
-print("Tokenizing and padding sequences...")
+print("Токенизация и дополнение последовательностей...")
 tokenizer = Tokenizer(num_words=10000)
 tokenizer.fit_on_texts(X_train)
 X_train_seq = tokenizer.texts_to_sequences(X_train)
@@ -68,7 +78,7 @@ X_train_pad = pad_sequences(X_train_seq, maxlen=100)
 X_test_pad = pad_sequences(X_test_seq, maxlen=100)
 
 # Define the neural network model
-print("Defining the neural network model...")
+print("Определение модели нейронной сети...")
 model = Sequential([
     Embedding(input_dim=10000, output_dim=128, input_length=100),  # Embedding layer for word representation
     Conv1D(filters=128, kernel_size=5, activation='relu'),  # 1D convolutional layer for feature extraction
@@ -80,41 +90,56 @@ model = Sequential([
 ])
 
 # Compile the model
-print("Compiling the model...")
+print("Компиляция модели...")
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
 # Train the model
-print("Training the model...")
-model.fit(X_train_pad, y_train, epochs=5, batch_size=32, validation_data=(X_test_pad, y_test))
+print("Обучение модели...")
+history = model.fit(X_train_pad, y_train, epochs=20, batch_size=32, validation_data=(X_test_pad, y_test))
 
-model.save_weights('/mnt/data/model_weights.h5')
+# Plot training accuracy and loss values
+plt.figure(figsize=(12, 4))
 
-# Testing the model on some emails
-def test_model(model, phishing_emails, legitimate_emails):
-    print("Testing the model...")
-    # Load a few phishing and legitimate emails for testing
-    test_phishing = phishing_emails[:100]
-    test_legitimate = legitimate_emails[:100]
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'])
+plt.title('Точность модели')
+plt.ylabel('Точность')
+plt.xlabel('Эпоха')
 
-    # Combine and preprocess test emails
-    test_emails = test_phishing + test_legitimate
-    cleaned_test_emails = preprocess_emails(test_emails)
+# Plot training loss values
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'])
+plt.title('Потери модели')
+plt.ylabel('Потери')
+plt.xlabel('Эпоха')
 
-    # Tokenize and pad test emails
-    test_seq = tokenizer.texts_to_sequences(cleaned_test_emails)
-    X_test_pad = pad_sequences(test_seq, maxlen=100)
+plt.tight_layout()
+plt.show()
 
+# Evaluate the model
+def evaluate_model(model, X_test_pad, y_test):
+    print("Оценка модели...")
     # Make predictions
     predictions = model.predict(X_test_pad)
 
-    # Evaluate the predictions
-    for i, prediction in enumerate(predictions):
-        if prediction >= 0.5:
-            print(f"Email {i+1} is predicted as phishing with probability: {prediction[0]:.2f}")
-        else:
-            print(f"Email {i+1} is predicted as legitimate with probability: {1-prediction[0]:.2f}")
+    # Convert predictions to binary class labels
+    predicted_classes = (predictions >= 0.5).astype(int).flatten()
 
-# Test the model
-test_model(model, phishing_emails, legitimate_emails)
+    # Compute evaluation metrics
+    accuracy = accuracy_score(y_test, predicted_classes)
+    precision = precision_score(y_test, predicted_classes)
+    recall = recall_score(y_test, predicted_classes)
+    f1 = f1_score(y_test, predicted_classes)
+    cm = confusion_matrix(y_test, predicted_classes)
 
-print("Process completed.")
+    # Print the results
+    print(f"Точность модели: {accuracy:.4f}")
+    print(f"Точность (Precision): {precision:.4f}")
+    print(f"Полнота (Recall): {recall:.4f}")
+    print(f"F1-оценка (F1 Score): {f1:.4f}")
+    print(f"Матрица ошибок (Confusion Matrix):\n{cm}")
+
+# Evaluate the model
+evaluate_model(model, X_test_pad, y_test)
+
+print("Оценка завершена.")
